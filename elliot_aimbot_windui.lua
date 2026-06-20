@@ -102,54 +102,49 @@ end
 if lp.Character then elliotSetupChar(lp.Character) end
 lp.CharacterAdded:Connect(function(c) elliotSetupChar(c) end)
 
--- FIXED HOOK: Fully wrapped with pcall for maximum safety
+-- SIMPLIFIED HOOK: No pcall, just safe checks
 task.spawn(function()
-    local ok, re = pcall(function()
-        return svc.RS:WaitForChild("Modules",5):WaitForChild("Network",5):WaitForChild("Network",5):WaitForChild("RemoteEvent",5)
-    end)
+    local remoteEvent = svc.RS:FindFirstChild("Modules")
+    if remoteEvent then
+        remoteEvent = remoteEvent:FindFirstChild("Network")
+        if remoteEvent then
+            remoteEvent = remoteEvent:FindFirstChild("Network")
+            if remoteEvent then
+                remoteEvent = remoteEvent:FindFirstChild("RemoteEvent")
+            end
+        end
+    end
     
-    if ok and re then
-        local oldFire = re.FireServer
+    if remoteEvent then
+        local oldFire = remoteEvent.FireServer
         
-        re.FireServer = function(self, ...)
-            -- Wrap entire function in pcall to prevent errors
-            local success, result = pcall(function()
-                local args = {...}
-                
-                -- Quick early return if not the right call type
-                if args[1] == "UseActorAbility" and args[2] and type(args[2]) == "table" then
-                    local abilityData = args[2][1]
-                    -- Use buffer if available, but fallback to string if not
-                    local dataSuccess, dataResult = pcall(function()
-                        if type(abilityData) == "string" then
-                            return abilityData
-                        else
-                            return buffer.tostring(abilityData)
-                        end
-                    end)
+        remoteEvent.FireServer = function(self, ...)
+            local args = {...}
+            
+            -- Safe check for throw ability
+            if args and args[1] == "UseActorAbility" and args[2] and type(args[2]) == "table" then
+                local abilityData = args[2][1]
+                if abilityData then
+                    local str = nil
+                    -- Safe string conversion
+                    if type(abilityData) == "string" then
+                        str = abilityData
+                    elseif type(abilityData) == "userdata" and buffer then
+                        str = buffer.tostring(abilityData)
+                    end
                     
-                    if dataSuccess and dataResult and string.find(dataResult, "ThrowPizza") then
+                    if str and string.find(str, "ThrowPizza") then
                         elliotIsThrowing = true
                         elliotThrowTS = tick()
-                        -- Auto-reset after duration (safety net)
                         task.delay(elliotThrowDur + 0.5, function()
-                            pcall(function()
-                                elliotIsThrowing = false
-                            end)
+                            elliotIsThrowing = false
                         end)
                     end
                 end
-                
-                -- Always pass through to original with pcall
-                return oldFire(self, ...)
-            end)
-            
-            -- If pcall failed, just return nil to prevent errors
-            if not success then
-                return nil
             end
             
-            return result
+            -- Always pass through
+            return oldFire(self, ...)
         end
     end
 end)
