@@ -65,14 +65,6 @@ local win = ui:CreateWindow({
 win:SetToggleKey(Enum.KeyCode.L)
 
 ------------------------------------------------------------------------
--- HELPERS
-------------------------------------------------------------------------
-local function getTeamFolder(name)
-    local root = svc.WS:FindFirstChild("Players")
-    return root and root:FindFirstChild(name)
-end
-
-------------------------------------------------------------------------
 -- ELLIOT AIMBOT TAB
 ------------------------------------------------------------------------
 local tabElliot = win:Tab({ Title = "Elliot", Icon = "pizza", IconColor = Color3.fromHex("#FFD700"), ShowTabTitle = false })
@@ -99,7 +91,9 @@ local elliotGravity     = 196.2
 local elliotHum, elliotHRP = nil, nil
 local elliotCamera      = svc.WS.CurrentCamera
 local elliotTargetMode  = "Low HP"
+local elliotLastAimTime = 0
 
+-- FIX: Keep buffer but don't block other calls
 local function elliotSetupChar(char)
     elliotHum = char:WaitForChild("Humanoid")
     elliotHRP = char:WaitForChild("HumanoidRootPart")
@@ -108,27 +102,44 @@ end
 if lp.Character then elliotSetupChar(lp.Character) end
 lp.CharacterAdded:Connect(function(c) elliotSetupChar(c) end)
 
--- Hook network for throw detection
+-- FIXED HOOK: Less intrusive, passes through all calls quickly
 task.spawn(function()
     local ok, re = pcall(function()
         return svc.RS:WaitForChild("Modules",5):WaitForChild("Network",5):WaitForChild("Network",5):WaitForChild("RemoteEvent",5)
     end)
+    
     if ok and re then
-        local oldNC
-        oldNC = hookmetamethod(game,"__namecall",function(self,...)
-            local method = getnamecallmethod()
+        -- Use a faster, more specific check
+        local oldFire = re.FireServer
+        
+        re.FireServer = function(self, ...)
             local args = {...}
-            if method=="FireServer" and self==re then
-                if args[1]=="UseActorAbility" and args[2] and args[2][1] then
-                    local ok2, bs = pcall(function() return buffer.tostring(args[2][1]) end)
-                    if ok2 and bs and string.find(bs,"ThrowPizza") then
-                        elliotIsThrowing = true
-                        elliotThrowTS    = tick()
+            
+            -- Quick early return if not the right call type (avoids processing overhead)
+            if args[1] == "UseActorAbility" and args[2] and type(args[2]) == "table" then
+                local abilityData = args[2][1]
+                -- Use buffer if available, but fallback to string if not
+                local success, result = pcall(function()
+                    if type(abilityData) == "string" then
+                        return abilityData
+                    else
+                        return buffer.tostring(abilityData)
                     end
+                end)
+                
+                if success and result and string.find(result, "ThrowPizza") then
+                    elliotIsThrowing = true
+                    elliotThrowTS = tick()
+                    -- Auto-reset after duration (safety net)
+                    task.delay(elliotThrowDur + 0.5, function()
+                        elliotIsThrowing = false
+                    end)
                 end
             end
-            return oldNC(self,...)
-        end)
+            
+            -- Always pass through to original
+            return oldFire(self, ...)
+        end
     end
 end)
 
@@ -164,14 +175,24 @@ end
 
 local function elliotAimAt(tgt)
     if not tgt or not tgt.Parent then return end
+    
+    -- Rate limit to prevent lag
+    local now = tick()
+    if now - elliotLastAimTime < 0.05 then return end
+    elliotLastAimTime = now
+    
     local vel = tgt.AssemblyLinearVelocity
     local pos = tgt.Position
     local predPos = pos + (tgt.CFrame.LookVector * 2)
     if vel.Magnitude > elliotVelThresh then predPos = predPos + (vel.Unit * elliotPredDist) end
+    
     if elliotAimType == "HRP Aimbot" or elliotAimType == "Camera + Character" then
         if elliotHRP then
-            if not elliotAutoRotBak then elliotAutoRotBak = elliotHum.AutoRotate end
-            elliotHum.AutoRotate = false
+            -- Only modify AutoRotate temporarily
+            if elliotAutoRotBak == nil then 
+                elliotAutoRotBak = elliotHum.AutoRotate
+                elliotHum.AutoRotate = false
+            end
             elliotHRP.AssemblyAngularVelocity = Vector3.new(0,0,0)
             local dir = (predPos - elliotHRP.Position)
             local flat = Vector3.new(dir.X,0,dir.Z).Unit
@@ -181,8 +202,14 @@ local function elliotAimAt(tgt)
             elliotHRP.CFrame = CFrame.new(cur.Position) * nCF.Rotation
         end
     end
+    
     if elliotAimType == "Camera Aimbot" or elliotAimType == "Camera + Character" then
-        local cam = svc.WS.CurrentCamera; if cam then cam.CFrame = CFrame.lookAt(cam.CFrame.Position, predPos) end
+        local cam = svc.WS.CurrentCamera
+        if cam then 
+            -- Smooth camera transition
+            local targetCF = CFrame.lookAt(cam.CFrame.Position, predPos)
+            cam.CFrame = cam.CFrame:Lerp(targetCF, 0.3)
+        end
     end
 end
 
@@ -245,25 +272,58 @@ secAimbot:Toggle({
         elliotEnabled = v
         if v then
             elliotConnection = svc.Run.RenderStepped:Connect(function()
-                if not elliotEnabled or not elliotHum or not elliotHRP then return end
-                if elliotIsThrowing and (tick()-elliotThrowTS)>elliotThrowDur then elliotIsThrowing=false end
+                if not elliotEnabled or not elliotHum or not elliotHRP then 
+                    -- Restore AutoRotate if disabled
+                    if elliotAutoRotBak ~= nil then 
+                        elliotHum.AutoRotate = elliotAutoRotBak
+                        elliotAutoRotBak = nil
+                    end
+                    return 
+                end
+                
                 if elliotShowArc then elliotUpdateArc() end
+                
+                -- Check if we should aim
                 local shouldAim = elliotRequireAnim and elliotIsThrowing or (not elliotRequireAnim)
+                
                 if not shouldAim then
-                    if elliotAutoRotBak ~= nil then elliotHum.AutoRotate=elliotAutoRotBak; elliotAutoRotBak=nil end
+                    -- Restore AutoRotate when not aiming
+                    if elliotAutoRotBak ~= nil then 
+                        elliotHum.AutoRotate = elliotAutoRotBak
+                        elliotAutoRotBak = nil
+                    end
                     return
                 end
+                
+                -- Reset throw state after duration
+                if elliotIsThrowing and (tick() - elliotThrowTS) > elliotThrowDur then
+                    elliotIsThrowing = false
+                    if elliotAutoRotBak ~= nil then 
+                        elliotHum.AutoRotate = elliotAutoRotBak
+                        elliotAutoRotBak = nil
+                    end
+                    return
+                end
+                
                 local tgt = elliotFindTarget()
                 if not tgt then
-                    if elliotAutoRotBak ~= nil then elliotHum.AutoRotate=elliotAutoRotBak; elliotAutoRotBak=nil end
+                    if elliotAutoRotBak ~= nil then 
+                        elliotHum.AutoRotate = elliotAutoRotBak
+                        elliotAutoRotBak = nil
+                    end
                     return
                 end
+                
                 elliotAimAt(tgt)
             end)
         else
             if elliotConnection then elliotConnection:Disconnect(); elliotConnection=nil end
-            if elliotAutoRotBak ~= nil then elliotHum.AutoRotate=elliotAutoRotBak; elliotAutoRotBak=nil end
+            if elliotAutoRotBak ~= nil then 
+                if elliotHum then elliotHum.AutoRotate = elliotAutoRotBak end
+                elliotAutoRotBak = nil
+            end
             elliotClearArc()
+            elliotIsThrowing = false
         end
     end 
 })
