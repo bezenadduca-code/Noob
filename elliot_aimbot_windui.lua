@@ -1,8 +1,5 @@
 -- Elliot Aimbot (standalone) | WindUI
-print("Elliot Aimbot loading...")
-
--- Wrap everything in pcall for error protection
-local success, err = pcall(function()
+print("Elliot Aimbot loaded")
 
 ------------------------------------------------------------------------
 -- SERVICES
@@ -105,85 +102,86 @@ end
 if lp.Character then elliotSetupChar(lp.Character) end
 lp.CharacterAdded:Connect(function(c) elliotSetupChar(c) end)
 
--- FIXED HOOK: Less intrusive, passes through all calls quickly
+-- FIXED HOOK: Fully wrapped with pcall for maximum safety
 task.spawn(function()
     local ok, re = pcall(function()
         return svc.RS:WaitForChild("Modules",5):WaitForChild("Network",5):WaitForChild("Network",5):WaitForChild("RemoteEvent",5)
     end)
     
     if ok and re then
-        -- Use a faster, more specific check
         local oldFire = re.FireServer
         
         re.FireServer = function(self, ...)
-            local args = {...}
-            
-            -- Quick early return if not the right call type (avoids processing overhead)
-            if args[1] == "UseActorAbility" and args[2] and type(args[2]) == "table" then
-                local abilityData = args[2][1]
-                -- Use buffer if available, but fallback to string if not
-                local success, result = pcall(function()
-                    if type(abilityData) == "string" then
-                        return abilityData
-                    else
-                        return buffer.tostring(abilityData)
-                    end
-                end)
+            -- Wrap entire function in pcall to prevent errors
+            local success, result = pcall(function()
+                local args = {...}
                 
-                if success and result and string.find(result, "ThrowPizza") then
-                    elliotIsThrowing = true
-                    elliotThrowTS = tick()
-                    -- Auto-reset after duration (safety net)
-                    task.delay(elliotThrowDur + 0.5, function()
-                        elliotIsThrowing = false
+                -- Quick early return if not the right call type
+                if args[1] == "UseActorAbility" and args[2] and type(args[2]) == "table" then
+                    local abilityData = args[2][1]
+                    -- Use buffer if available, but fallback to string if not
+                    local dataSuccess, dataResult = pcall(function()
+                        if type(abilityData) == "string" then
+                            return abilityData
+                        else
+                            return buffer.tostring(abilityData)
+                        end
                     end)
+                    
+                    if dataSuccess and dataResult and string.find(dataResult, "ThrowPizza") then
+                        elliotIsThrowing = true
+                        elliotThrowTS = tick()
+                        -- Auto-reset after duration (safety net)
+                        task.delay(elliotThrowDur + 0.5, function()
+                            pcall(function()
+                                elliotIsThrowing = false
+                            end)
+                        end)
+                    end
                 end
+                
+                -- Always pass through to original with pcall
+                return oldFire(self, ...)
+            end)
+            
+            -- If pcall failed, just return nil to prevent errors
+            if not success then
+                return nil
             end
             
-            -- Always pass through to original
-            return oldFire(self, ...)
+            return result
         end
     end
 end)
 
 local function elliotClearArc()
-    pcall(function()
-        for _, p in ipairs(elliotArcParts) do 
-            if p and p.Parent then p:Destroy() end 
-        end
-        elliotArcParts = {}
-    end)
+    for _, p in ipairs(elliotArcParts) do if p and p.Parent then p:Destroy() end end
+    elliotArcParts = {}
 end
 
 local function elliotCreateArcFolder()
-    pcall(function()
-        if elliotArcFolder then elliotArcFolder:Destroy() end
-        elliotArcFolder = Instance.new("Folder")
-        elliotArcFolder.Name = "ElliotArc"
-        elliotArcFolder.Parent = svc.WS
-    end)
+    if elliotArcFolder then elliotArcFolder:Destroy() end
+    elliotArcFolder = Instance.new("Folder"); elliotArcFolder.Name="ElliotArc"; elliotArcFolder.Parent=svc.WS
 end
 
 local function elliotFindTarget()
-    pcall(function()
-        local sf = svc.WS:FindFirstChild("Players") and svc.WS.Players:FindFirstChild("Survivors")
-        if not sf then sf = svc.WS:FindFirstChild("Survivors") end
-        if not sf or not elliotHRP then return nil end
-        local best, bestVal = nil, math.huge
-        for _, s in ipairs(sf:GetChildren()) do
-            if s ~= lp.Character then
-                local h = s:FindFirstChildOfClass("Humanoid")
-                local r = s:FindFirstChild("HumanoidRootPart")
-                if h and r and h.Health > 0 then
-                    local val = elliotTargetMode == "Closest"
-                        and (r.Position - elliotHRP.Position).Magnitude
-                        or  h.Health
-                    if val < bestVal then best = r; bestVal = val end
-                end
+    local sf = svc.WS:FindFirstChild("Players") and svc.WS.Players:FindFirstChild("Survivors")
+    if not sf then sf = svc.WS:FindFirstChild("Survivors") end
+    if not sf or not elliotHRP then return nil end
+    local best, bestVal = nil, math.huge
+    for _, s in ipairs(sf:GetChildren()) do
+        if s ~= lp.Character then
+            local h = s:FindFirstChildOfClass("Humanoid")
+            local r = s:FindFirstChild("HumanoidRootPart")
+            if h and r and h.Health > 0 then
+                local val = elliotTargetMode == "Closest"
+                    and (r.Position - elliotHRP.Position).Magnitude
+                    or  h.Health
+                if val < bestVal then best = r; bestVal = val end
             end
         end
-        return best
-    end)
+    end
+    return best
 end
 
 local function elliotAimAt(tgt)
@@ -194,103 +192,85 @@ local function elliotAimAt(tgt)
     if now - elliotLastAimTime < 0.05 then return end
     elliotLastAimTime = now
     
-    pcall(function()
-        local vel = tgt.AssemblyLinearVelocity
-        local pos = tgt.Position
-        local predPos = pos + (tgt.CFrame.LookVector * 2)
-        if vel.Magnitude > elliotVelThresh then predPos = predPos + (vel.Unit * elliotPredDist) end
-        
-        if elliotAimType == "HRP Aimbot" or elliotAimType == "Camera + Character" then
-            if elliotHRP then
-                -- Only modify AutoRotate temporarily
-                if elliotAutoRotBak == nil then 
-                    elliotAutoRotBak = elliotHum.AutoRotate
-                    elliotHum.AutoRotate = false
-                end
-                elliotHRP.AssemblyAngularVelocity = Vector3.new(0,0,0)
-                local dir = (predPos - elliotHRP.Position)
-                local flat = Vector3.new(dir.X,0,dir.Z).Unit
-                local tCF = CFrame.new(elliotHRP.Position, elliotHRP.Position + flat)
-                local cur = elliotHRP.CFrame
-                local nCF = cur:Lerp(tCF, 0.35)
-                elliotHRP.CFrame = CFrame.new(cur.Position) * nCF.Rotation
+    local vel = tgt.AssemblyLinearVelocity
+    local pos = tgt.Position
+    local predPos = pos + (tgt.CFrame.LookVector * 2)
+    if vel.Magnitude > elliotVelThresh then predPos = predPos + (vel.Unit * elliotPredDist) end
+    
+    if elliotAimType == "HRP Aimbot" or elliotAimType == "Camera + Character" then
+        if elliotHRP then
+            -- Only modify AutoRotate temporarily
+            if elliotAutoRotBak == nil then 
+                elliotAutoRotBak = elliotHum.AutoRotate
+                elliotHum.AutoRotate = false
             end
+            elliotHRP.AssemblyAngularVelocity = Vector3.new(0,0,0)
+            local dir = (predPos - elliotHRP.Position)
+            local flat = Vector3.new(dir.X,0,dir.Z).Unit
+            local tCF = CFrame.new(elliotHRP.Position, elliotHRP.Position + flat)
+            local cur = elliotHRP.CFrame
+            local nCF = cur:Lerp(tCF, 0.35)
+            elliotHRP.CFrame = CFrame.new(cur.Position) * nCF.Rotation
         end
-        
-        if elliotAimType == "Camera Aimbot" or elliotAimType == "Camera + Character" then
-            local cam = svc.WS.CurrentCamera
-            if cam then 
-                -- Smooth camera transition
-                local targetCF = CFrame.lookAt(cam.CFrame.Position, predPos)
-                cam.CFrame = cam.CFrame:Lerp(targetCF, 0.3)
-            end
+    end
+    
+    if elliotAimType == "Camera Aimbot" or elliotAimType == "Camera + Character" then
+        local cam = svc.WS.CurrentCamera
+        if cam then 
+            -- Smooth camera transition
+            local targetCF = CFrame.lookAt(cam.CFrame.Position, predPos)
+            cam.CFrame = cam.CFrame:Lerp(targetCF, 0.3)
         end
-    end)
+    end
 end
 
 local function elliotArcCalc(startPos, lookVec)
-    local pts = {}
-    pcall(function()
-        local dir = (lookVec + Vector3.new(0, elliotUpComp, 0)).Unit
-        local iv   = dir * elliotThrowForce
-        local maxT = 3
-        local step = maxT / elliotArcSegs
-        local last = startPos
-        local rp   = RaycastParams.new()
-        rp.FilterType = Enum.RaycastFilterType.Exclude
-        rp.FilterDescendantsInstances = { lp.Character, elliotArcFolder }
-        for i = 0, elliotArcSegs do
-            local t   = i * step
-            local pos = startPos + iv*t + Vector3.new(0,-0.5*elliotGravity*t*t,0)
-            if i > 0 then
-                local d = pos - last
-                local dm = d.Magnitude
-                if dm > 0 then
-                    local res = svc.WS:Raycast(last, d.Unit*dm, rp)
-                    if res then table.insert(pts, res.Position); break end
-                end
+    local dir = (lookVec + Vector3.new(0, elliotUpComp, 0)).Unit
+    local iv   = dir * elliotThrowForce
+    local maxT = 3
+    local pts  = {}
+    local step = maxT / elliotArcSegs
+    local last = startPos
+    local rp   = RaycastParams.new()
+    rp.FilterType = Enum.RaycastFilterType.Exclude
+    rp.FilterDescendantsInstances = { lp.Character, elliotArcFolder }
+    for i = 0, elliotArcSegs do
+        local t   = i * step
+        local pos = startPos + iv*t + Vector3.new(0,-0.5*elliotGravity*t*t,0)
+        if i > 0 then
+            local d = pos - last
+            local dm = d.Magnitude
+            if dm > 0 then
+                local res = svc.WS:Raycast(last, d.Unit*dm, rp)
+                if res then table.insert(pts, res.Position); break end
             end
-            if pos.Y < -100 then break end
-            table.insert(pts, pos); last = pos
         end
-    end)
+        if pos.Y < -100 then break end
+        table.insert(pts, pos); last = pos
+    end
     return pts
 end
 
 local _elliotLastArcUpdate = 0
 local function elliotUpdateArc()
-    pcall(function()
-        if not elliotShowArc or not elliotHRP then elliotClearArc(); return end
-        local now = tick()
-        if now - _elliotLastArcUpdate < 0.1 then return end
-        _elliotLastArcUpdate = now
-        local char = lp.Character
-        local lArm = char and (char:FindFirstChild("Left Arm") or char:FindFirstChild("LeftHand") or char:FindFirstChild("LeftLowerArm"))
-        local startPos = lArm and lArm.Position or (elliotHRP.Position + Vector3.new(-1,1,0) + elliotHRP.CFrame.LookVector*2)
-        local pts = elliotArcCalc(startPos, elliotHRP.CFrame.LookVector)
-        elliotClearArc()
-        if not elliotArcFolder then elliotCreateArcFolder() end
-        for i, p in ipairs(pts) do
-            local part = Instance.new("Part")
-            part.Name = "ArcSeg"..i
-            part.Size = Vector3.new(0.25,0.25,0.25)
-            part.Position = p
-            part.Anchored = true
-            part.CanCollide = false
-            part.Material = Enum.Material.Neon
-            part.Shape = Enum.PartType.Ball
-            if i == #pts and #pts > 1 then 
-                part.Size = Vector3.new(0.5,0.5,0.5)
-                part.Color = Color3.fromRGB(255,255,0)
-                part.Transparency = 0
-            else 
-                part.Color = Color3.fromRGB(255,0,0)
-                part.Transparency = 0.15
-            end
-            part.Parent = elliotArcFolder
-            table.insert(elliotArcParts, part)
-        end
-    end)
+    if not elliotShowArc or not elliotHRP then elliotClearArc(); return end
+    local now = tick()
+    if now - _elliotLastArcUpdate < 0.1 then return end
+    _elliotLastArcUpdate = now
+    local char = lp.Character
+    local lArm = char and (char:FindFirstChild("Left Arm") or char:FindFirstChild("LeftHand") or char:FindFirstChild("LeftLowerArm"))
+    local startPos = lArm and lArm.Position or (elliotHRP.Position + Vector3.new(-1,1,0) + elliotHRP.CFrame.LookVector*2)
+    local pts = elliotArcCalc(startPos, elliotHRP.CFrame.LookVector)
+    elliotClearArc()
+    if not elliotArcFolder then elliotCreateArcFolder() end
+    for i, p in ipairs(pts) do
+        local part = Instance.new("Part"); part.Name="ArcSeg"..i; part.Size=Vector3.new(0.25,0.25,0.25)
+        part.Position=p; part.Anchored=true; part.CanCollide=false; part.Material=Enum.Material.Neon
+        part.Shape=Enum.PartType.Ball
+        if i == #pts and #pts > 1 then part.Size=Vector3.new(0.5,0.5,0.5); part.Color=Color3.fromRGB(255,255,0); part.Transparency=0
+        else part.Color=Color3.fromRGB(255,0,0); part.Transparency=0.15 end
+        part.Parent=elliotArcFolder; table.insert(elliotArcParts, part)
+    end
 end
 
 -- UI Controls
@@ -300,66 +280,62 @@ secAimbot:Toggle({
     Flag = "elliotEnabled", 
     Default = false, 
     Callback = function(v)
-        pcall(function()
-            elliotEnabled = v
-            if v then
-                elliotConnection = svc.Run.RenderStepped:Connect(function()
-                    pcall(function()
-                        if not elliotEnabled or not elliotHum or not elliotHRP then 
-                            -- Restore AutoRotate if disabled
-                            if elliotAutoRotBak ~= nil then 
-                                elliotHum.AutoRotate = elliotAutoRotBak
-                                elliotAutoRotBak = nil
-                            end
-                            return 
-                        end
-                        
-                        if elliotShowArc then elliotUpdateArc() end
-                        
-                        -- Check if we should aim
-                        local shouldAim = elliotRequireAnim and elliotIsThrowing or (not elliotRequireAnim)
-                        
-                        if not shouldAim then
-                            -- Restore AutoRotate when not aiming
-                            if elliotAutoRotBak ~= nil then 
-                                elliotHum.AutoRotate = elliotAutoRotBak
-                                elliotAutoRotBak = nil
-                            end
-                            return
-                        end
-                        
-                        -- Reset throw state after duration
-                        if elliotIsThrowing and (tick() - elliotThrowTS) > elliotThrowDur then
-                            elliotIsThrowing = false
-                            if elliotAutoRotBak ~= nil then 
-                                elliotHum.AutoRotate = elliotAutoRotBak
-                                elliotAutoRotBak = nil
-                            end
-                            return
-                        end
-                        
-                        local tgt = elliotFindTarget()
-                        if not tgt then
-                            if elliotAutoRotBak ~= nil then 
-                                elliotHum.AutoRotate = elliotAutoRotBak
-                                elliotAutoRotBak = nil
-                            end
-                            return
-                        end
-                        
-                        elliotAimAt(tgt)
-                    end)
-                end)
-            else
-                if elliotConnection then elliotConnection:Disconnect(); elliotConnection=nil end
-                if elliotAutoRotBak ~= nil then 
-                    if elliotHum then elliotHum.AutoRotate = elliotAutoRotBak end
-                    elliotAutoRotBak = nil
+        elliotEnabled = v
+        if v then
+            elliotConnection = svc.Run.RenderStepped:Connect(function()
+                if not elliotEnabled or not elliotHum or not elliotHRP then 
+                    -- Restore AutoRotate if disabled
+                    if elliotAutoRotBak ~= nil then 
+                        elliotHum.AutoRotate = elliotAutoRotBak
+                        elliotAutoRotBak = nil
+                    end
+                    return 
                 end
-                elliotClearArc()
-                elliotIsThrowing = false
+                
+                if elliotShowArc then elliotUpdateArc() end
+                
+                -- Check if we should aim
+                local shouldAim = elliotRequireAnim and elliotIsThrowing or (not elliotRequireAnim)
+                
+                if not shouldAim then
+                    -- Restore AutoRotate when not aiming
+                    if elliotAutoRotBak ~= nil then 
+                        elliotHum.AutoRotate = elliotAutoRotBak
+                        elliotAutoRotBak = nil
+                    end
+                    return
+                end
+                
+                -- Reset throw state after duration
+                if elliotIsThrowing and (tick() - elliotThrowTS) > elliotThrowDur then
+                    elliotIsThrowing = false
+                    if elliotAutoRotBak ~= nil then 
+                        elliotHum.AutoRotate = elliotAutoRotBak
+                        elliotAutoRotBak = nil
+                    end
+                    return
+                end
+                
+                local tgt = elliotFindTarget()
+                if not tgt then
+                    if elliotAutoRotBak ~= nil then 
+                        elliotHum.AutoRotate = elliotAutoRotBak
+                        elliotAutoRotBak = nil
+                    end
+                    return
+                end
+                
+                elliotAimAt(tgt)
+            end)
+        else
+            if elliotConnection then elliotConnection:Disconnect(); elliotConnection=nil end
+            if elliotAutoRotBak ~= nil then 
+                if elliotHum then elliotHum.AutoRotate = elliotAutoRotBak end
+                elliotAutoRotBak = nil
             end
-        end)
+            elliotClearArc()
+            elliotIsThrowing = false
+        end
     end 
 })
 
@@ -368,7 +344,7 @@ secAimbot:Dropdown({
     Flag = "elliotAimType", 
     Values = {"HRP Aimbot","Camera Aimbot","Camera + Character"}, 
     Default = "Camera + Character", 
-    Callback = function(v) pcall(function() elliotAimType=v end) end 
+    Callback = function(v) elliotAimType=v end 
 })
 
 secAimbot:Dropdown({ 
@@ -376,7 +352,7 @@ secAimbot:Dropdown({
     Flag = "elliotTargetMode", 
     Values = {"Low HP","Closest"}, 
     Default = "Low HP", 
-    Callback = function(v) pcall(function() elliotTargetMode=v end) end 
+    Callback = function(v) elliotTargetMode=v end 
 })
 
 secAimbot:Slider({ 
@@ -384,7 +360,7 @@ secAimbot:Slider({
     Flag = "elliotPredDist", 
     Value = {Min=0,Max=50,Default=5}, 
     Step = 1, 
-    Callback = function(v) pcall(function() elliotPredDist=v end) end 
+    Callback = function(v) elliotPredDist=v end 
 })
 
 secAimbot:Slider({ 
@@ -392,15 +368,7 @@ secAimbot:Slider({
     Flag = "elliotThrowDur", 
     Value = {Min=0.1,Max=2,Default=0.5}, 
     Step = 0.1, 
-    Callback = function(v) 
-        pcall(function() 
-            elliotThrowDur=v 
-            -- Update the auto-reset delay
-            task.delay(v + 0.5, function()
-                elliotIsThrowing = false
-            end)
-        end) 
-    end 
+    Callback = function(v) elliotThrowDur=v end 
 })
 
 secAimbot:Slider({ 
@@ -408,7 +376,7 @@ secAimbot:Slider({
     Flag = "elliotThrowForce", 
     Value = {Min=50,Max=150,Default=80}, 
     Step = 5, 
-    Callback = function(v) pcall(function() elliotThrowForce=v end) end 
+    Callback = function(v) elliotThrowForce=v end 
 })
 
 secAimbot:Slider({ 
@@ -416,7 +384,7 @@ secAimbot:Slider({
     Flag = "elliotArcSegs", 
     Value = {Min=20,Max=100,Default=50}, 
     Step = 5, 
-    Callback = function(v) pcall(function() elliotArcSegs=v end) end 
+    Callback = function(v) elliotArcSegs=v end 
 })
 
 secAimbot:Toggle({ 
@@ -424,18 +392,9 @@ secAimbot:Toggle({
     Flag = "elliotShowArc", 
     Default = false, 
     Callback = function(v)
-        pcall(function()
-            elliotShowArc=v
-            if v then 
-                elliotCreateArcFolder()
-            else 
-                elliotClearArc()
-                if elliotArcFolder then 
-                    elliotArcFolder:Destroy()
-                    elliotArcFolder=nil 
-                end 
-            end
-        end)
+        elliotShowArc=v
+        if v then elliotCreateArcFolder()
+        else elliotClearArc(); if elliotArcFolder then elliotArcFolder:Destroy(); elliotArcFolder=nil end end
     end, 
     Type = "Checkbox"
 })
@@ -444,44 +403,8 @@ secAimbot:Toggle({
     Title = "Require Throw Animation", 
     Flag = "elliotReqAnim", 
     Default = true, 
-    Callback = function(v) pcall(function() elliotRequireAnim=v end) end, 
+    Callback = function(v) elliotRequireAnim=v end, 
     Type = "Checkbox"
 })
 
-print("Elliot Aimbot loaded successfully!")
-
-end) -- End of main pcall
-
--- Error handling
-if not success then
-    warn("Elliot Aimbot failed to load: " .. tostring(err))
-    print("Elliot Aimbot encountered an error. Check console for details.")
-    
-    -- Attempt to show error in UI if possible
-    pcall(function()
-        local errorGui = Instance.new("ScreenGui")
-        errorGui.Name = "ElliotError"
-        errorGui.Parent = game.Players.LocalPlayer:WaitForChild("PlayerGui")
-        
-        local frame = Instance.new("Frame")
-        frame.Size = UDim2.new(0, 400, 0, 100)
-        frame.Position = UDim2.new(0.5, -200, 0.5, -50)
-        frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-        frame.BackgroundTransparency = 0.1
-        frame.BorderSizePixel = 0
-        frame.Parent = errorGui
-        
-        local label = Instance.new("TextLabel")
-        label.Size = UDim2.new(1, -20, 1, -20)
-        label.Position = UDim2.new(0, 10, 0, 10)
-        label.Text = "Elliot Aimbot Error:\n" .. tostring(err):sub(1, 100)
-        label.TextColor3 = Color3.fromRGB(255, 200, 200)
-        label.TextScaled = true
-        label.BackgroundTransparency = 1
-        label.Parent = frame
-        
-        task.delay(5, function()
-            errorGui:Destroy()
-        end)
-    end)
-end
+print("Elliot Aimbot ready!")
