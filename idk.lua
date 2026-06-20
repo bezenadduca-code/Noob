@@ -1932,7 +1932,7 @@ local secSupports = tabChar:Section({ Title = "Supports", Opened = true })
 
 secSupports:Button({ Title="Dusekkar", Callback=function() loadstring(game:HttpGet("https://pastebin.com/raw/ugJKrDyw"))() end })
 
-secSupports:Button({ Title="Elliot", Callback=function() loadstring(game:HttpGet("https://raw.githubusercontent.com/bezenadduca-code/Noob/refs/heads/main/Elliot%20Script%20Fixed.lua"))() end })
+secSupports:Button({ Title="Elliot", Callback=function() loadstring(game:HttpGet("https://raw.githubusercontent.com/bezenadduca-code/Noob/refs/heads/main/elliot_aimbot_windui.lua"))() end })
 
 local tabInterface = win:Tab({ Title = "Interface", Icon = "scan" })
 local secUIFunctions = tabInterface:Section({ Title = "UI Functions", Opened = true })
