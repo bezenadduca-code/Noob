@@ -1,4 +1,3 @@
--- Elliot Aimbot (standalone) | WindUI
 print("Elliot Aimbot loaded")
 
 ------------------------------------------------------------------------
@@ -8,76 +7,54 @@ local svc = {
     Players      = game:GetService("Players"),
     Run          = game:GetService("RunService"),
     Input        = game:GetService("UserInputService"),
-    RS           = game:GetService("ReplicatedStorage"),
     WS           = game:GetService("Workspace"),
-    TweenService = game:GetService("TweenService"),
 }
 
-local lp  = svc.Players.LocalPlayer
-local gui = lp:WaitForChild("PlayerGui", 10)
+local lp = svc.Players.LocalPlayer
 
 ------------------------------------------------------------------------
--- WINDUI LOADER
+-- WINDUI LOADER (OFFICIAL)
 ------------------------------------------------------------------------
-local ui = loadstring(game:HttpGet(
-    "https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"
-))()
+local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
 
 ------------------------------------------------------------------------
--- THEME
+-- WINDUI SETUP
 ------------------------------------------------------------------------
-ui:AddTheme({
-    Name            = "ElliotTheme",
-    Accent          = Color3.fromHex("#FFD700"),
-    Background      = Color3.fromHex("#1A1410"),
-    Outline         = Color3.fromHex("#FFD700"),
-    Text            = Color3.fromHex("#FFF8DC"),
-    Toggle          = Color3.fromHex("#FFD700"),
-    ToggleBar       = Color3.fromHex("#8B6914"),
-    Checkbox        = Color3.fromHex("#FFD700"),
-    CheckboxIcon    = Color3.fromHex("#FFF8DC"),
-    Slider          = Color3.fromHex("#FFD700"),
-    SliderThumb     = Color3.fromHex("#FFF8DC"),
-    WindowBackground= Color3.fromHex("#0F0D0A"),
-})
-ui:SetTheme("ElliotTheme")
+WindUI:SetTheme("Crimson")
 
-------------------------------------------------------------------------
--- WINDOW
-------------------------------------------------------------------------
-local win = ui:CreateWindow({
-    Title          = "Elliot Aimbot",
-    Icon           = "pizza",
-    Author         = "Elliot Module",
-    Folder         = "elliot-aimbot",
-    Size           = UDim2.fromOffset(480, 420),
-    MinSize        = Vector2.new(400, 300),
-    MaxSize        = Vector2.new(800, 600),
-    Transparent    = true,
-    Theme          = "ElliotTheme",
-    Resizable      = true,
-    SideBarWidth   = 150,
-    HideSearchBar  = false,
-    ScrollBarEnabled = true,
-    BackgroundImageTransparency = 0.4,
+local Window = WindUI:CreateWindow({
+    Title = "Elliot Aimbot",
+    Icon = "target",
+    Folder = "ElliotAimbot",
+    Size = UDim2.fromOffset(580, 490),
+    Theme = "Crimson",
+    Acrylic = true,
 })
 
-win:SetToggleKey(Enum.KeyCode.L)
+------------------------------------------------------------------------
+-- MANUAL KEYBIND
+------------------------------------------------------------------------
+local uiVisible = true
+
+svc.Input.InputBegan:Connect(function(input)
+    if input.KeyCode == Enum.KeyCode.L and input.UserInputType == Enum.UserInputType.Keyboard then
+        uiVisible = not uiVisible
+        if uiVisible then
+            Window:Show()
+        else
+            Window:Hide()
+        end
+    end
+end)
 
 ------------------------------------------------------------------------
--- ELLIOT AIMBOT TAB
+-- ELLIOT AIMBOT VARIABLES
 ------------------------------------------------------------------------
-local tabElliot = win:Tab({ Title = "Elliot", Icon = "pizza", IconColor = Color3.fromHex("#FFD700"), ShowTabTitle = false })
-local secAimbot = tabElliot:Section({ Title = "Pizza Throw Aimbot", Opened = true })
-
--- Elliot Aimbot Variables
 local elliotEnabled     = false
 local elliotConnection  = nil
 local elliotAutoRotBak  = nil
-local elliotPredDist    = 5
-local elliotVelThresh   = 16
 local elliotAimType     = "Camera + Character"
-local elliotThrowDur    = 0.5
+local elliotThrowDur    = 0.6
 local elliotIsThrowing  = false
 local elliotThrowTS     = 0
 local elliotRequireAnim = true
@@ -89,134 +66,73 @@ local elliotThrowForce  = 80
 local elliotUpComp      = 0.5
 local elliotGravity     = 196.2
 local elliotHum, elliotHRP = nil, nil
-local elliotCamera      = svc.WS.CurrentCamera
 local elliotTargetMode  = "Low HP"
 local elliotLastAimTime = 0
+local elliotSmoothness  = 0.15
+local elliotPredDist    = 5
+local elliotThrowAnimId = "rbxassetid://114155003741146"
 
--- FIX: Keep buffer but don't block other calls
+------------------------------------------------------------------------
+-- CHARACTER SETUP WITH ANIMATION HOOK
+------------------------------------------------------------------------
+local function hookAnimator(animator)
+    if not animator then return end
+    
+    local connection = animator.AnimationPlayed:Connect(function(animTrack)
+        if not animTrack or not animTrack.Animation then return end
+        
+        local animId = ""
+        pcall(function()
+            animId = tostring(animTrack.Animation.AnimationId)
+        end)
+        
+        if animId:find("114155003741146") or animId:find(elliotThrowAnimId) then
+            elliotIsThrowing = true
+            elliotThrowTS = tick()
+            print("[Elliot] 🎬 Throw animation detected!")
+        end
+    end)
+    
+    return connection
+end
+
+local animatorConnection = nil
 local function elliotSetupChar(char)
-    elliotHum = char:WaitForChild("Humanoid")
-    elliotHRP = char:WaitForChild("HumanoidRootPart")
+    elliotHum = char:WaitForChild("Humanoid", 3)
+    elliotHRP = char:WaitForChild("HumanoidRootPart", 3)
+    
+    if elliotHum then
+        local animator = elliotHum:FindFirstChildOfClass("Animator")
+        if animator then
+            hookAnimator(animator)
+        else
+            elliotHum.ChildAdded:Connect(function(child)
+                if child:IsA("Animator") then
+                    hookAnimator(child)
+                end
+            end)
+        end
+    end
 end
 
 if lp.Character then elliotSetupChar(lp.Character) end
 lp.CharacterAdded:Connect(function(c) elliotSetupChar(c) end)
 
--- SIMPLIFIED HOOK: No pcall, just safe checks
-task.spawn(function()
-    local remoteEvent = svc.RS:FindFirstChild("Modules")
-    if remoteEvent then
-        remoteEvent = remoteEvent:FindFirstChild("Network")
-        if remoteEvent then
-            remoteEvent = remoteEvent:FindFirstChild("Network")
-            if remoteEvent then
-                remoteEvent = remoteEvent:FindFirstChild("RemoteEvent")
-            end
-        end
-    end
-    
-    if remoteEvent then
-        local oldFire = remoteEvent.FireServer
-        
-        remoteEvent.FireServer = function(self, ...)
-            local args = {...}
-            
-            -- Safe check for throw ability
-            if args and args[1] == "UseActorAbility" and args[2] and type(args[2]) == "table" then
-                local abilityData = args[2][1]
-                if abilityData then
-                    local str = nil
-                    -- Safe string conversion
-                    if type(abilityData) == "string" then
-                        str = abilityData
-                    elseif type(abilityData) == "userdata" and buffer then
-                        str = buffer.tostring(abilityData)
-                    end
-                    
-                    if str and string.find(str, "ThrowPizza") then
-                        elliotIsThrowing = true
-                        elliotThrowTS = tick()
-                        task.delay(elliotThrowDur + 0.5, function()
-                            elliotIsThrowing = false
-                        end)
-                    end
-                end
-            end
-            
-            -- Always pass through
-            return oldFire(self, ...)
-        end
-    end
-end)
-
+------------------------------------------------------------------------
+-- ARC VISUALIZATION
+------------------------------------------------------------------------
 local function elliotClearArc()
-    for _, p in ipairs(elliotArcParts) do if p and p.Parent then p:Destroy() end end
+    for _, p in ipairs(elliotArcParts) do
+        if p and p.Parent then p:Destroy() end
+    end
     elliotArcParts = {}
 end
 
 local function elliotCreateArcFolder()
     if elliotArcFolder then elliotArcFolder:Destroy() end
-    elliotArcFolder = Instance.new("Folder"); elliotArcFolder.Name="ElliotArc"; elliotArcFolder.Parent=svc.WS
-end
-
-local function elliotFindTarget()
-    local sf = svc.WS:FindFirstChild("Players") and svc.WS.Players:FindFirstChild("Survivors")
-    if not sf then sf = svc.WS:FindFirstChild("Survivors") end
-    if not sf or not elliotHRP then return nil end
-    local best, bestVal = nil, math.huge
-    for _, s in ipairs(sf:GetChildren()) do
-        if s ~= lp.Character then
-            local h = s:FindFirstChildOfClass("Humanoid")
-            local r = s:FindFirstChild("HumanoidRootPart")
-            if h and r and h.Health > 0 then
-                local val = elliotTargetMode == "Closest"
-                    and (r.Position - elliotHRP.Position).Magnitude
-                    or  h.Health
-                if val < bestVal then best = r; bestVal = val end
-            end
-        end
-    end
-    return best
-end
-
-local function elliotAimAt(tgt)
-    if not tgt or not tgt.Parent then return end
-    
-    -- Rate limit to prevent lag
-    local now = tick()
-    if now - elliotLastAimTime < 0.05 then return end
-    elliotLastAimTime = now
-    
-    local vel = tgt.AssemblyLinearVelocity
-    local pos = tgt.Position
-    local predPos = pos + (tgt.CFrame.LookVector * 2)
-    if vel.Magnitude > elliotVelThresh then predPos = predPos + (vel.Unit * elliotPredDist) end
-    
-    if elliotAimType == "HRP Aimbot" or elliotAimType == "Camera + Character" then
-        if elliotHRP then
-            -- Only modify AutoRotate temporarily
-            if elliotAutoRotBak == nil then 
-                elliotAutoRotBak = elliotHum.AutoRotate
-                elliotHum.AutoRotate = false
-            end
-            elliotHRP.AssemblyAngularVelocity = Vector3.new(0,0,0)
-            local dir = (predPos - elliotHRP.Position)
-            local flat = Vector3.new(dir.X,0,dir.Z).Unit
-            local tCF = CFrame.new(elliotHRP.Position, elliotHRP.Position + flat)
-            local cur = elliotHRP.CFrame
-            local nCF = cur:Lerp(tCF, 0.35)
-            elliotHRP.CFrame = CFrame.new(cur.Position) * nCF.Rotation
-        end
-    end
-    
-    if elliotAimType == "Camera Aimbot" or elliotAimType == "Camera + Character" then
-        local cam = svc.WS.CurrentCamera
-        if cam then 
-            -- Smooth camera transition
-            local targetCF = CFrame.lookAt(cam.CFrame.Position, predPos)
-            cam.CFrame = cam.CFrame:Lerp(targetCF, 0.3)
-        end
-    end
+    elliotArcFolder = Instance.new("Folder")
+    elliotArcFolder.Name = "ElliotArc"
+    elliotArcFolder.Parent = svc.WS
 end
 
 local function elliotArcCalc(startPos, lookVec)
@@ -229,177 +145,381 @@ local function elliotArcCalc(startPos, lookVec)
     local rp   = RaycastParams.new()
     rp.FilterType = Enum.RaycastFilterType.Exclude
     rp.FilterDescendantsInstances = { lp.Character, elliotArcFolder }
+    
     for i = 0, elliotArcSegs do
         local t   = i * step
-        local pos = startPos + iv*t + Vector3.new(0,-0.5*elliotGravity*t*t,0)
+        local pos = startPos + iv*t + Vector3.new(0, -0.5*elliotGravity*t*t, 0)
         if i > 0 then
             local d = pos - last
             local dm = d.Magnitude
             if dm > 0 then
                 local res = svc.WS:Raycast(last, d.Unit*dm, rp)
-                if res then table.insert(pts, res.Position); break end
+                if res then
+                    table.insert(pts, res.Position)
+                    break
+                end
             end
         end
         if pos.Y < -100 then break end
-        table.insert(pts, pos); last = pos
+        table.insert(pts, pos)
+        last = pos
     end
     return pts
 end
 
 local _elliotLastArcUpdate = 0
 local function elliotUpdateArc()
-    if not elliotShowArc or not elliotHRP then elliotClearArc(); return end
+    if not elliotShowArc or not elliotHRP then
+        elliotClearArc()
+        return
+    end
+    
     local now = tick()
     if now - _elliotLastArcUpdate < 0.1 then return end
     _elliotLastArcUpdate = now
+    
     local char = lp.Character
     local lArm = char and (char:FindFirstChild("Left Arm") or char:FindFirstChild("LeftHand") or char:FindFirstChild("LeftLowerArm"))
     local startPos = lArm and lArm.Position or (elliotHRP.Position + Vector3.new(-1,1,0) + elliotHRP.CFrame.LookVector*2)
     local pts = elliotArcCalc(startPos, elliotHRP.CFrame.LookVector)
+    
     elliotClearArc()
     if not elliotArcFolder then elliotCreateArcFolder() end
+    
     for i, p in ipairs(pts) do
-        local part = Instance.new("Part"); part.Name="ArcSeg"..i; part.Size=Vector3.new(0.25,0.25,0.25)
-        part.Position=p; part.Anchored=true; part.CanCollide=false; part.Material=Enum.Material.Neon
-        part.Shape=Enum.PartType.Ball
-        if i == #pts and #pts > 1 then part.Size=Vector3.new(0.5,0.5,0.5); part.Color=Color3.fromRGB(255,255,0); part.Transparency=0
-        else part.Color=Color3.fromRGB(255,0,0); part.Transparency=0.15 end
-        part.Parent=elliotArcFolder; table.insert(elliotArcParts, part)
+        local part = Instance.new("Part")
+        part.Name = "ArcSeg"..i
+        part.Size = Vector3.new(0.25, 0.25, 0.25)
+        part.Position = p
+        part.Anchored = true
+        part.CanCollide = false
+        part.Material = Enum.Material.Neon
+        part.Shape = Enum.PartType.Ball
+        
+        if i == #pts and #pts > 1 then
+            part.Size = Vector3.new(0.5, 0.5, 0.5)
+            part.Color = Color3.fromRGB(255, 255, 0)
+            part.Transparency = 0
+        else
+            part.Color = Color3.fromRGB(255, 0, 0)
+            part.Transparency = 0.15
+        end
+        
+        part.Parent = elliotArcFolder
+        table.insert(elliotArcParts, part)
     end
 end
 
--- UI Controls
-secAimbot:Toggle({ 
-    Title = "Enable Aimbot", 
-    Type = "Checkbox", 
-    Flag = "elliotEnabled", 
-    Default = false, 
+------------------------------------------------------------------------
+-- TARGET FINDING
+------------------------------------------------------------------------
+local function elliotFindTarget()
+    local sf = svc.WS:FindFirstChild("Players")
+    if sf then sf = sf:FindFirstChild("Survivors") end
+    if not sf then sf = svc.WS:FindFirstChild("Survivors") end
+    if not sf or not elliotHRP then return nil end
+    
+    local best, bestVal = nil, math.huge
+    for _, s in ipairs(sf:GetChildren()) do
+        if s ~= lp.Character then
+            local h = s:FindFirstChildOfClass("Humanoid")
+            local r = s:FindFirstChild("HumanoidRootPart")
+            if h and r and h.Health > 0 then
+                local val = elliotTargetMode == "Closest"
+                    and (r.Position - elliotHRP.Position).Magnitude
+                    or h.Health
+                if val < bestVal then
+                    best = r
+                    bestVal = val
+                end
+            end
+        end
+    end
+    return best
+end
+
+------------------------------------------------------------------------
+-- AIMING
+------------------------------------------------------------------------
+local function elliotAimAt(tgt)
+    if not tgt or not tgt.Parent then return end
+    
+    local now = tick()
+    if now - elliotLastAimTime < 0.016 then return end
+    elliotLastAimTime = now
+    
+    local vel = tgt.AssemblyLinearVelocity or Vector3.zero
+    local pos = tgt.Position
+    local predPos = pos
+    
+    if vel.Magnitude > 2 then
+        local dist = (tgt.Position - elliotHRP.Position).Magnitude
+        local predTime = math.min(dist / elliotThrowForce, 1.0)
+        predPos = tgt.Position + (vel * predTime * (elliotPredDist / 5))
+    end
+    
+    -- HRP Aimbot
+    if elliotAimType == "HRP Aimbot" or elliotAimType == "Camera + Character" then
+        if elliotHRP and elliotHum then
+            if elliotAutoRotBak == nil then
+                elliotAutoRotBak = elliotHum.AutoRotate
+                elliotHum.AutoRotate = false
+            end
+            
+            elliotHRP.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+            local direction = (predPos - elliotHRP.Position)
+            local flatDirection = Vector3.new(direction.X, 0, direction.Z)
+            
+            if flatDirection.Magnitude > 0.1 then
+                local lookAt = CFrame.lookAt(elliotHRP.Position, elliotHRP.Position + flatDirection.Unit)
+                local cur = elliotHRP.CFrame
+                local nCF = cur:Lerp(CFrame.new(cur.Position) * lookAt.Rotation, elliotSmoothness)
+                elliotHRP.CFrame = nCF
+            end
+        end
+    end
+    
+    -- Camera Aimbot
+    if elliotAimType == "Camera Aimbot" or elliotAimType == "Camera + Character" then
+        local cam = svc.WS.CurrentCamera
+        if cam then
+            local targetCF = CFrame.lookAt(cam.CFrame.Position, predPos)
+            cam.CFrame = cam.CFrame:Lerp(targetCF, elliotSmoothness * 1.5)
+        end
+    end
+end
+
+------------------------------------------------------------------------
+-- MAIN AIMBOT LOOP
+------------------------------------------------------------------------
+local function startAimbot()
+    if elliotConnection then elliotConnection:Disconnect() end
+    
+    elliotConnection = svc.Run.RenderStepped:Connect(function()
+        if not elliotEnabled or not elliotHum or not elliotHRP then
+            if elliotAutoRotBak ~= nil and elliotHum then
+                elliotHum.AutoRotate = elliotAutoRotBak
+                elliotAutoRotBak = nil
+            end
+            return
+        end
+        
+        if elliotShowArc then elliotUpdateArc() end
+        
+        local shouldAim = false
+        if elliotRequireAnim then
+            shouldAim = elliotIsThrowing and (tick() - elliotThrowTS) <= elliotThrowDur
+        else
+            shouldAim = true
+        end
+        
+        if elliotIsThrowing and (tick() - elliotThrowTS) > elliotThrowDur then
+            elliotIsThrowing = false
+        end
+        
+        if not shouldAim then
+            if elliotAutoRotBak ~= nil and elliotHum then
+                elliotHum.AutoRotate = elliotAutoRotBak
+                elliotAutoRotBak = nil
+            end
+            return
+        end
+        
+        local tgt = elliotFindTarget()
+        if tgt then
+            elliotAimAt(tgt)
+        else
+            if elliotAutoRotBak ~= nil and elliotHum then
+                elliotHum.AutoRotate = elliotAutoRotBak
+                elliotAutoRotBak = nil
+            end
+        end
+    end)
+end
+
+------------------------------------------------------------------------
+-- WINDUI UI (ONE TAB, CORRECT SYNTAX)
+------------------------------------------------------------------------
+local MainTab = Window:Tab({
+    Title = "Aimbot",
+    Icon = "crosshair"
+})
+
+-- Main toggle
+MainTab:Toggle({
+    Title = "Enable Aimbot",
+    Description = "Toggle the aimbot on/off",
+    Value = false,
     Callback = function(v)
         elliotEnabled = v
         if v then
-            elliotConnection = svc.Run.RenderStepped:Connect(function()
-                if not elliotEnabled or not elliotHum or not elliotHRP then 
-                    -- Restore AutoRotate if disabled
-                    if elliotAutoRotBak ~= nil then 
-                        elliotHum.AutoRotate = elliotAutoRotBak
-                        elliotAutoRotBak = nil
-                    end
-                    return 
-                end
-                
-                if elliotShowArc then elliotUpdateArc() end
-                
-                -- Check if we should aim
-                local shouldAim = elliotRequireAnim and elliotIsThrowing or (not elliotRequireAnim)
-                
-                if not shouldAim then
-                    -- Restore AutoRotate when not aiming
-                    if elliotAutoRotBak ~= nil then 
-                        elliotHum.AutoRotate = elliotAutoRotBak
-                        elliotAutoRotBak = nil
-                    end
-                    return
-                end
-                
-                -- Reset throw state after duration
-                if elliotIsThrowing and (tick() - elliotThrowTS) > elliotThrowDur then
-                    elliotIsThrowing = false
-                    if elliotAutoRotBak ~= nil then 
-                        elliotHum.AutoRotate = elliotAutoRotBak
-                        elliotAutoRotBak = nil
-                    end
-                    return
-                end
-                
-                local tgt = elliotFindTarget()
-                if not tgt then
-                    if elliotAutoRotBak ~= nil then 
-                        elliotHum.AutoRotate = elliotAutoRotBak
-                        elliotAutoRotBak = nil
-                    end
-                    return
-                end
-                
-                elliotAimAt(tgt)
-            end)
+            startAimbot()
+            print("[Elliot] ✅ Aimbot enabled")
         else
-            if elliotConnection then elliotConnection:Disconnect(); elliotConnection=nil end
-            if elliotAutoRotBak ~= nil then 
-                if elliotHum then elliotHum.AutoRotate = elliotAutoRotBak end
+            if elliotConnection then
+                elliotConnection:Disconnect()
+                elliotConnection = nil
+            end
+            if elliotAutoRotBak ~= nil and elliotHum then
+                elliotHum.AutoRotate = elliotAutoRotBak
                 elliotAutoRotBak = nil
             end
             elliotClearArc()
             elliotIsThrowing = false
+            print("[Elliot] ❌ Aimbot disabled")
         end
-    end 
+    end
 })
 
-secAimbot:Dropdown({ 
-    Title = "Aimbot Type", 
-    Flag = "elliotAimType", 
-    Values = {"HRP Aimbot","Camera Aimbot","Camera + Character"}, 
-    Default = "Camera + Character", 
-    Callback = function(v) elliotAimType=v end 
-})
-
-secAimbot:Dropdown({ 
-    Title = "Target Mode", 
-    Flag = "elliotTargetMode", 
-    Values = {"Low HP","Closest"}, 
-    Default = "Low HP", 
-    Callback = function(v) elliotTargetMode=v end 
-})
-
-secAimbot:Slider({ 
-    Title = "Prediction Studs", 
-    Flag = "elliotPredDist", 
-    Value = {Min=0,Max=50,Default=5}, 
-    Step = 1, 
-    Callback = function(v) elliotPredDist=v end 
-})
-
-secAimbot:Slider({ 
-    Title = "Aim Duration (s)", 
-    Flag = "elliotThrowDur", 
-    Value = {Min=0.1,Max=2,Default=0.5}, 
-    Step = 0.1, 
-    Callback = function(v) elliotThrowDur=v end 
-})
-
-secAimbot:Slider({ 
-    Title = "Pizza Throw Force", 
-    Flag = "elliotThrowForce", 
-    Value = {Min=50,Max=150,Default=80}, 
-    Step = 5, 
-    Callback = function(v) elliotThrowForce=v end 
-})
-
-secAimbot:Slider({ 
-    Title = "Arc Segments", 
-    Flag = "elliotArcSegs", 
-    Value = {Min=20,Max=100,Default=50}, 
-    Step = 5, 
-    Callback = function(v) elliotArcSegs=v end 
-})
-
-secAimbot:Toggle({ 
-    Title = "Show Pizza Arc", 
-    Flag = "elliotShowArc", 
-    Default = false, 
+-- Aimbot Type Dropdown
+MainTab:Dropdown({
+    Title = "Aimbot Type",
+    Description = "Choose how the aimbot targets",
+    Values = {"HRP Aimbot", "Camera Aimbot", "Camera + Character"},
+    Value = "Camera + Character",
     Callback = function(v)
-        elliotShowArc=v
-        if v then elliotCreateArcFolder()
-        else elliotClearArc(); if elliotArcFolder then elliotArcFolder:Destroy(); elliotArcFolder=nil end end
-    end, 
-    Type = "Checkbox"
+        elliotAimType = v
+        print("[Elliot] Aimbot type: " .. v)
+    end
 })
 
-secAimbot:Toggle({ 
-    Title = "Require Throw Animation", 
-    Flag = "elliotReqAnim", 
-    Default = true, 
-    Callback = function(v) elliotRequireAnim=v end, 
-    Type = "Checkbox"
+-- Target Mode Dropdown
+MainTab:Dropdown({
+    Title = "Target Mode",
+    Description = "How targets are selected",
+    Values = {"Low HP", "Closest"},
+    Value = "Low HP",
+    Callback = function(v)
+        elliotTargetMode = v
+        print("[Elliot] Target mode: " .. v)
+    end
 })
 
-print("Elliot Aimbot ready!")
+-- Sliders (CORRECT WindUI syntax)
+MainTab:Slider({
+    Title = "Throw Window (s)",
+    Description = "Duration of throw animation window",
+    Step = 0.1,
+    Value = {
+        Min = 0.1,
+        Max = 2,
+        Default = 0.6,
+    },
+    Callback = function(v)
+        elliotThrowDur = v
+    end
+})
+
+MainTab:Slider({
+    Title = "Smoothness",
+    Description = "How smooth the aimbot transitions",
+    Step = 0.01,
+    Value = {
+        Min = 0.05,
+        Max = 0.5,
+        Default = 0.15,
+    },
+    Callback = function(v)
+        elliotSmoothness = v
+    end
+})
+
+MainTab:Slider({
+    Title = "Prediction (studs)",
+    Description = "How much to predict target movement",
+    Step = 1,
+    Value = {
+        Min = 0,
+        Max = 50,
+        Default = 5,
+    },
+    Callback = function(v)
+        elliotPredDist = v
+    end
+})
+
+MainTab:Slider({
+    Title = "Throw Force",
+    Description = "Force of the throw",
+    Step = 5,
+    Value = {
+        Min = 50,
+        Max = 150,
+        Default = 80,
+    },
+    Callback = function(v)
+        elliotThrowForce = v
+    end
+})
+
+MainTab:Slider({
+    Title = "Arc Segments",
+    Description = "Number of segments in arc visualization",
+    Step = 5,
+    Value = {
+        Min = 20,
+        Max = 100,
+        Default = 50,
+    },
+    Callback = function(v)
+        elliotArcSegs = v
+    end
+})
+
+-- Toggles
+MainTab:Toggle({
+    Title = "Require Animation",
+    Description = "Only aim when throw animation plays",
+    Value = true,
+    Callback = function(v)
+        elliotRequireAnim = v
+        print("[Elliot] Animation requirement: " .. (v and "ON" or "OFF"))
+    end
+})
+
+MainTab:Toggle({
+    Title = "Show Arc Visualization",
+    Description = "Display the throw arc",
+    Value = false,
+    Callback = function(v)
+        elliotShowArc = v
+        if v then
+            elliotCreateArcFolder()
+            print("[Elliot] Arc visualization enabled")
+        else
+            elliotClearArc()
+            if elliotArcFolder then
+                elliotArcFolder:Destroy()
+                elliotArcFolder = nil
+            end
+            print("[Elliot] Arc visualization disabled")
+        end
+    end
+})
+
+-- Keybind button
+MainTab:Keybind({
+    Title = "Toggle UI",
+    Description = "Press L to toggle the window",
+    Value = Enum.KeyCode.L,
+    Mode = "Toggle",
+    Callback = function(Key)
+        uiVisible = not uiVisible
+        if uiVisible then
+            Window:Show()
+        else
+            Window:Hide()
+        end
+    end
+})
+
+------------------------------------------------------------------------
+-- NOTIFICATION
+------------------------------------------------------------------------
+WindUI:Notify({
+    Title = "Elliot Aimbot",
+    Content = "Aimbot loaded successfully! Press L to toggle UI",
+    Duration = 3
+})
+
+print("✅ Elliot Aimbot ready! Press L to toggle UI")
